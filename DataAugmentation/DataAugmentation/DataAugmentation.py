@@ -11,7 +11,9 @@ import sitkUtils
 import time
 import numpy as np
 import itertools
-
+from transforms.noise_transforms import *
+from transforms.abstract_transforms import Compose
+from transforms.utility_transforms import *
 #
 # DataAugmentation
 #
@@ -107,6 +109,7 @@ class DataAugmentationWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         """
         ScriptedLoadableModuleWidget.__init__(self, parent)
         VTKObservationMixin.__init__(self)  # needed for parameter node observation
+        self.sigma_lineEdit = None
         self.time_cost_lineEdit = None
         self.logic = None
         self._parameterNode = None
@@ -142,6 +145,7 @@ class DataAugmentationWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         # These connections ensure that whenever user changes some settings on the GUI, that is saved in the MRML scene
         # (in the selected parameter node).
         self.ui.inputSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.updateParameterNodeFromGUI)
+        self.ui.labelSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.updateParameterNodeFromGUI)
         self.ui.xTranslationSliderWidget.connect("valueChanged(double)", self.updateParameterNodeFromGUI)
         self.ui.yTranslationSliderWidget.connect("valueChanged(double)", self.updateParameterNodeFromGUI)
         self.ui.zTranslationSliderWidget.connect("valueChanged(double)", self.updateParameterNodeFromGUI)
@@ -149,13 +153,17 @@ class DataAugmentationWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.ui.yRotationSliderWidget.connect("valueChanged(double)", self.updateParameterNodeFromGUI)
         self.ui.zRotationSliderWidget.connect("valueChanged(double)", self.updateParameterNodeFromGUI)
         self.time_cost_lineEdit = self.ui.time_cost_lineEdit
+        self.sigma_lineEdit = self.ui.sigma_lineEdit
 
         # Buttons
-        self.ui.runPushButton.connect('clicked(bool)', self.onRunPushButton)
+        self.ui.transformPushButton.connect('clicked(bool)', self.onTransformPushButton)
+        self.ui.gaussBlurPushButton.connect('clicked(bool)', self.onGaussBlurPushButton)
+        self.ui.gaussNoisePushButton.connect('clicked(bool)', self.onGaussNoisePushButton)
 
         # Make sure parameter node is initialized (needed for module reload)
         self.initializeParameterNode()
         self.initializeLayout()
+        self.sigma_lineEdit.setText(0.3)
 
     def initializeLayout(self):
         slicer.app.layoutManager().setLayout(slicer.vtkMRMLLayoutNode.SlicerLayoutFourUpView)
@@ -248,8 +256,9 @@ class DataAugmentationWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         # Make sure GUI changes do not call updateParameterNodeFromGUI (it could cause infinite loop)
         self._updatingGUIFromParameterNode = True
 
-        # Update node selectors and sliders
+        # Update node selectors
         self.ui.inputSelector.setCurrentNode(self._parameterNode.GetNodeReference("InputVolume"))
+        self.ui.labelSelector.setCurrentNode(self._parameterNode.GetNodeReference("LabelVolume"))
 
         # Update buttons states and tooltips
         if self._parameterNode.GetNodeReference("InputVolume") and self._parameterNode.GetNodeReference("OutputVolume"):
@@ -272,6 +281,7 @@ class DataAugmentationWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         wasModified = self._parameterNode.StartModify()  # Modify all properties in a single batch
 
         self._parameterNode.SetNodeReferenceID("InputVolume", self.ui.inputSelector.currentNodeID)
+        self._parameterNode.SetNodeReferenceID("LabelVolume", self.ui.labelSelector.currentNodeID)
         self._parameterNode.SetParameter("xTranslation", str(self.ui.xTranslationSliderWidget.value))
         self._parameterNode.SetParameter("yTranslation", str(self.ui.yTranslationSliderWidget.value))
         self._parameterNode.SetParameter("zTranslation", str(self.ui.zTranslationSliderWidget.value))
@@ -281,7 +291,7 @@ class DataAugmentationWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
         self._parameterNode.EndModify(wasModified)
 
-    def onRunPushButton(self):
+    def onTransformPushButton(self):
         # 用字典reload后可能会出现滞后性错误
         # 根据平移或旋转信息生成对应的输出图像数据，命名为transformed
         x_shift = float(self.ui.xTranslationSliderWidget.value)
@@ -296,19 +306,71 @@ class DataAugmentationWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         volume_node = self._parameterNode.GetNodeReference("InputVolume")
         output_volume_node = slicer.modules.volumes.logic().CloneVolume(volume_node, "translated")
         itk_image = sitkUtils.PullVolumeFromSlicer(output_volume_node)
+        label_node = self._parameterNode.GetNodeReference("LabelVolume")
+        output_label_node = slicer.modules.volumes.logic().CloneVolume(label_node, "translated_label")
+        label_image = sitkUtils.PullVolumeFromSlicer(output_label_node)
         offset = [x_shift, y_shift, z_shift]  # 在x、y和z方向上的平移量
         tic = time.time()
-        if x_shift * x_shift * x_shift != 0:
+        if x_shift != 0 or y_shift != 0 or z_shift != 0:
             print("in translation")
             transformed_image = sitk_translation_transform(itk_image, offset)
+            transformed_label_image = sitk_translation_transform(label_image, offset, is_label=True)
         else:
             print("in rotation")
             default_value = np.float64(sitk.GetArrayViewFromImage(itk_image).min())
             transformed_image = sitk_rotation3d(itk_image, x_angle, y_angle, z_angle, None, default_value)
+            transformed_label_image = sitk_rotation3d(label_image, x_angle, y_angle, z_angle, None)
         toc = time.time()
         time_cost = toc - tic
         self.time_cost_lineEdit.setText(str(time_cost) + " s")
         sitkUtils.PushVolumeToSlicer(transformed_image, output_volume_node)
+        sitkUtils.PushVolumeToSlicer(transformed_label_image, output_label_node)
+
+    def onGaussBlurPushButton(self):
+        print("in gauss blur")
+        gauss_blur = GaussianBlurTransform((0.5, 3), different_sigma_per_channel=False, p_per_sample=1.0)
+        volume_node = self._parameterNode.GetNodeReference("InputVolume")
+        output_volume_node = slicer.modules.volumes.logic().CloneVolume(volume_node, "gauss_blured")
+        image_arr = slicer.util.arrayFromVolume(output_volume_node)
+        label_node = self._parameterNode.GetNodeReference("LabelVolume")
+        if label_node:
+            label_arr = slicer.util.arrayFromVolume(label_node)
+        else:
+            label_arr = np.ones_like(image_arr)
+        image_arr = image_arr[np.newaxis, :, :, :]
+        label_arr = label_arr[np.newaxis, :, :, :]
+        tic = time.time()
+        out_dict = gauss_blur(data=image_arr, gt=label_arr)
+        toc = time.time()
+        time_cost = toc - tic
+        self.time_cost_lineEdit.setText(str(time_cost) + " s")
+        d, gt = out_dict.get('data'), out_dict.get('gt')
+        d = d[0]
+        gt = gt[0]
+        slicer.util.updateVolumeFromArray(output_volume_node, d)
+
+    def onGaussNoisePushButton(self):
+        print("in gauss noise")
+        gauss_noise = GaussianNoiseTransform((0.5, 3), different_sigma_per_channel=False, p_per_sample=1.0)
+        volume_node = self._parameterNode.GetNodeReference("InputVolume")
+        output_volume_node = slicer.modules.volumes.logic().CloneVolume(volume_node, "gauss_blured")
+        image_arr = slicer.util.arrayFromVolume(output_volume_node)
+        label_node = self._parameterNode.GetNodeReference("LabelVolume")
+        if label_node:
+            label_arr = slicer.util.arrayFromVolume(label_node)
+        else:
+            label_arr = np.ones_like(image_arr)
+        image_arr = image_arr[np.newaxis, :, :, :]
+        label_arr = label_arr[np.newaxis, :, :, :]
+        tic = time.time()
+        out_dict = gauss_noise(data=image_arr, gt=label_arr)
+        toc = time.time()
+        time_cost = toc - tic
+        self.time_cost_lineEdit.setText(str(time_cost) + " s")
+        d, gt = out_dict.get('data'), out_dict.get('gt')
+        d = d[0]
+        gt = gt[0]
+        slicer.util.updateVolumeFromArray(output_volume_node, d)
 
 
 def sitk_rotation3d(image, theta_x, theta_y, theta_z, output_spacing=None, background_value=0.0):
@@ -324,6 +386,7 @@ def sitk_rotation3d(image, theta_x, theta_y, theta_z, output_spacing=None, backg
                            spacing from original image.
     :return: The rotated image
     """
+    # https://discourse.itk.org/t/point-indices-after-3d-rotation/6249
     euler_transform = sitk.Euler3DTransform(
         image.TransformContinuousIndexToPhysicalPoint([(sz - 1) / 2.0 for sz in image.GetSize()]),
         np.deg2rad(theta_x),
@@ -362,7 +425,7 @@ def sitk_rotation3d(image, theta_x, theta_y, theta_z, output_spacing=None, backg
                          output_pixeltype)
 
 
-def sitk_translation_transform(itk_image, offset):
+def sitk_translation_transform(itk_image, offset, is_label=False):
     # 创建ResampleImageFilter对象，并设置平移向量
     image_size = itk_image.GetSize()
     dimension = itk_image.GetDimension()
@@ -370,7 +433,10 @@ def sitk_translation_transform(itk_image, offset):
     default_value = np.float64(sitk.GetArrayViewFromImage(itk_image).min())
     resampler = sitk.ResampleImageFilter()
     resampler.SetReferenceImage(itk_image)
-    resampler.SetInterpolator(sitk.sitkLinear)
+    if is_label:
+        resampler.SetInterpolator(sitk.sitkNearestNeighbor)
+    else:
+        resampler.SetInterpolator(sitk.sitkLinear)
     resampler.SetDefaultPixelValue(default_value)
     resampler.SetTransform(translation)
     # 指定原始图像和输出图像的尺寸
