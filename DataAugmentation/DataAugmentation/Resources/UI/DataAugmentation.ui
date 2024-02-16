@@ -29,6 +29,23 @@
     </layout>
    </item>
    <item>
+    <layout class="QHBoxLayout" name="horizontalLayout_4">
+     <property name="bottomMargin">
+      <number>0</number>
+     </property>
+     <item>
+      <widget class="QLabel" name="label_12">
+       <property name="text">
+        <string>依赖库：</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="ctkComboBox" name="modeSelectorComboBox"/>
+     </item>
+    </layout>
+   </item>
+   <item>
     <widget class="ctkCollapsibleButton" name="inputsCollapsibleButton">
      <property name="enabled">
       <bool>true</bool>
@@ -327,7 +344,7 @@
       </size>
      </property>
      <property name="text">
-      <string>高斯滤波</string>
+      <string>高斯滤波/噪声</string>
      </property>
      <layout class="QVBoxLayout" name="verticalLayout_3">
       <item>
@@ -385,6 +402,11 @@
    <extends>QWidget</extends>
    <header>ctkCollapsibleButton.h</header>
    <container>1</container>
+  </customwidget>
+  <customwidget>
+   <class>ctkComboBox</class>
+   <extends>QComboBox</extends>
+   <header>ctkComboBox.h</header>
   </customwidget>
   <customwidget>
    <class>ctkSliderWidget</class>

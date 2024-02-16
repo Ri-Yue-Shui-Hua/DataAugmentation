@@ -14,6 +14,7 @@ import itertools
 from transforms.noise_transforms import *
 from transforms.abstract_transforms import Compose
 from transforms.utility_transforms import *
+from transforms.spatial_transforms import *
 #
 # DataAugmentation
 #
@@ -114,6 +115,7 @@ class DataAugmentationWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.logic = None
         self._parameterNode = None
         self._updatingGUIFromParameterNode = False
+        self.modeList = ["batchgenerators", "SimpleITK", "MONAI"]
 
     def setup(self):
         """
@@ -163,6 +165,7 @@ class DataAugmentationWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         # Make sure parameter node is initialized (needed for module reload)
         self.initializeParameterNode()
         self.initializeLayout()
+        self.initModeSelector()
         self.sigma_lineEdit.setText(0.3)
 
     def initializeLayout(self):
@@ -172,6 +175,12 @@ class DataAugmentationWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         viewNode1.SetBackgroundColor2(0, 0, 0)
         viewNode1.SetBoxVisible(False)
         viewNode1.SetAxisLabelsVisible(False)
+
+    def initModeSelector(self):
+        for i in range(len(self.modeList)):
+            self.ui.modeSelectorComboBox.addItem(self.modeList[i])
+        self.ui.modeSelectorComboBox.currentIndex = 0
+        print(self.ui.modeSelectorComboBox.currentText)
 
     def cleanup(self):
         """
@@ -304,31 +313,62 @@ class DataAugmentationWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         print("x_angle, y_angle, z_angle: ", x_angle, y_angle, z_angle)
         # step1. 先测试平移操作
         volume_node = self._parameterNode.GetNodeReference("InputVolume")
-        output_volume_node = slicer.modules.volumes.logic().CloneVolume(volume_node, "translated")
+        output_volume_node = slicer.modules.volumes.logic().CloneVolume(volume_node, "transformed")
         itk_image = sitkUtils.PullVolumeFromSlicer(output_volume_node)
         label_node = self._parameterNode.GetNodeReference("LabelVolume")
-        output_label_node = slicer.modules.volumes.logic().CloneVolume(label_node, "translated_label")
+        output_label_node = slicer.modules.volumes.logic().CloneVolume(label_node, "transformed_label")
         label_image = sitkUtils.PullVolumeFromSlicer(output_label_node)
         offset = [x_shift, y_shift, z_shift]  # 在x、y和z方向上的平移量
+        mode_name = self.ui.modeSelectorComboBox.currentText
         tic = time.time()
         if x_shift != 0 or y_shift != 0 or z_shift != 0:
             print("in translation")
-            transformed_image = sitk_translation_transform(itk_image, offset)
-            transformed_label_image = sitk_translation_transform(label_image, offset, is_label=True)
+            if mode_name == "SimpleITK":
+                transformed_image = sitk_translation_transform(itk_image, offset)
+                transformed_label_image = sitk_translation_transform(label_image, offset, is_label=True)
+            else:
+                slicer.util.messageBox("暂时没有实现!")
+                return
         else:
             print("in rotation")
-            default_value = np.float64(sitk.GetArrayViewFromImage(itk_image).min())
-            transformed_image = sitk_rotation3d(itk_image, x_angle, y_angle, z_angle, None, default_value)
-            transformed_label_image = sitk_rotation3d(label_image, x_angle, y_angle, z_angle, None)
+            if mode_name == "SimpleITK":
+                default_value = np.float64(sitk.GetArrayViewFromImage(itk_image).min())
+                transformed_image = sitk_rotation3d(itk_image, x_angle, y_angle, z_angle, None, default_value)
+                transformed_label_image = sitk_rotation3d(label_image, x_angle, y_angle, z_angle, None)
+
+            elif mode_name == "batchgenerators":
+                image_arr = slicer.util.arrayFromVolume(output_volume_node)
+                if output_label_node:
+                    label_arr = slicer.util.arrayFromVolume(output_label_node)
+                else:
+                    label_arr = np.ones_like(image_arr)
+                axis = [0]
+                rotate_filter = RotateAxisTransform(x_angle_range=(-30, 30), y_angle_range=(-20, 20), z_angle_range=(-30, 30), axes=axis,
+                            data_key="data", label_key="gt", p_per_sample=1)
+                image_arr = image_arr[np.newaxis, np.newaxis, :, :, :]
+                label_arr = label_arr[np.newaxis, np.newaxis, :, :, :]
+                out_dict = rotate_filter(data=image_arr, gt=label_arr)
+                d, gt = out_dict.get('data'), out_dict.get('gt')
+                d = d[0][0]
+                gt = gt[0][0]
+            else:
+                slicer.util.messageBox("暂时没有实现!")
+                return
         toc = time.time()
         time_cost = toc - tic
         self.time_cost_lineEdit.setText(str(time_cost) + " s")
-        sitkUtils.PushVolumeToSlicer(transformed_image, output_volume_node)
-        sitkUtils.PushVolumeToSlicer(transformed_label_image, output_label_node)
+        if mode_name == "SimpleITK":
+            sitkUtils.PushVolumeToSlicer(transformed_image, output_volume_node)
+            sitkUtils.PushVolumeToSlicer(transformed_label_image, output_label_node)
+        elif mode_name == "batchgenerators":
+            slicer.util.updateVolumeFromArray(output_volume_node, d)
+            slicer.util.updateVolumeFromArray(output_label_node, gt)
+
 
     def onGaussBlurPushButton(self):
         print("in gauss blur")
-        gauss_blur = GaussianBlurTransform((0.5, 3), different_sigma_per_channel=False, p_per_sample=1.0)
+        # https://github.com/MIC-DKFZ/batchgenerators/blob/7738768bddd87217607583fe0abbc600f7682513/batchgenerators
+        # /examples/brats2017/brats2017_dataloader_3D.py#L14
         volume_node = self._parameterNode.GetNodeReference("InputVolume")
         output_volume_node = slicer.modules.volumes.logic().CloneVolume(volume_node, "gauss_blured")
         image_arr = slicer.util.arrayFromVolume(output_volume_node)
@@ -337,23 +377,28 @@ class DataAugmentationWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             label_arr = slicer.util.arrayFromVolume(label_node)
         else:
             label_arr = np.ones_like(image_arr)
-        image_arr = image_arr[np.newaxis, :, :, :]
-        label_arr = label_arr[np.newaxis, :, :, :]
-        tic = time.time()
-        out_dict = gauss_blur(data=image_arr, gt=label_arr)
-        toc = time.time()
-        time_cost = toc - tic
-        self.time_cost_lineEdit.setText(str(time_cost) + " s")
-        d, gt = out_dict.get('data'), out_dict.get('gt')
-        d = d[0]
-        gt = gt[0]
-        slicer.util.updateVolumeFromArray(output_volume_node, d)
+        mode_name = self.ui.modeSelectorComboBox.currentText
+        if mode_name == "batchgenerators":
+            gauss_blur = GaussianBlurTransform(blur_sigma=(0.5, 3), different_sigma_per_channel=False, p_per_sample=1.0)
+            image_arr = image_arr[np.newaxis, np.newaxis, :, :, :]
+            label_arr = label_arr[np.newaxis, np.newaxis, :, :, :]
+            tic = time.time()
+            out_dict = gauss_blur(data=image_arr, gt=label_arr)
+            toc = time.time()
+            time_cost = toc - tic
+            self.time_cost_lineEdit.setText(str(time_cost) + " s")
+            d, gt = out_dict.get('data'), out_dict.get('gt')
+            d = d[0]
+            gt = gt[0]
+            slicer.util.updateVolumeFromArray(output_volume_node, d)
+        else:
+            slicer.util.messageBox("暂时没有实现!")
 
     def onGaussNoisePushButton(self):
         print("in gauss noise")
-        gauss_noise = GaussianNoiseTransform((0.5, 3), different_sigma_per_channel=False, p_per_sample=1.0)
+        gauss_noise = GaussianNoiseTransform(noise_variance=(0, 0.1), p_per_sample=1.0)
         volume_node = self._parameterNode.GetNodeReference("InputVolume")
-        output_volume_node = slicer.modules.volumes.logic().CloneVolume(volume_node, "gauss_blured")
+        output_volume_node = slicer.modules.volumes.logic().CloneVolume(volume_node, "gauss_noise")
         image_arr = slicer.util.arrayFromVolume(output_volume_node)
         label_node = self._parameterNode.GetNodeReference("LabelVolume")
         if label_node:
