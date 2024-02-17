@@ -15,6 +15,7 @@ from transforms.noise_transforms import *
 from transforms.abstract_transforms import Compose
 from transforms.utility_transforms import *
 from transforms.spatial_transforms import *
+from transforms.color_transforms import *
 #
 # DataAugmentation
 #
@@ -161,12 +162,23 @@ class DataAugmentationWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.ui.transformPushButton.connect('clicked(bool)', self.onTransformPushButton)
         self.ui.gaussBlurPushButton.connect('clicked(bool)', self.onGaussBlurPushButton)
         self.ui.gaussNoisePushButton.connect('clicked(bool)', self.onGaussNoisePushButton)
+        self.ui.mirrorTransformPushButton.connect('clicked(bool)', self.onMirrorTransformPushButton)
+        self.ui.brightnessTransformPushButton.connect('clicked(bool)', self.onBrightnessTransformPushButton)
+        self.ui.contrastTransformPushButton.connect('clicked(bool)', self.onContrastTransformPushButton)
+        self.ui.resolutionTransformPushButton.connect('clicked(bool)', self.onResolutionTransformPushButton)
+        self.ui.gammaTransformPushButton.connect('clicked(bool)', self.onGammaTransformPushButtonn)
 
         # Make sure parameter node is initialized (needed for module reload)
         self.initializeParameterNode()
         self.initializeLayout()
         self.initModeSelector()
-        self.sigma_lineEdit.setText(0.3)
+        self.sigma_lineEdit.setText("1, 5")
+        self.ui.noise_variance_lineEdit.setText("0, 0.05")
+        self.ui.mirror_axis_lineEdit.setText("0")
+        self.ui.multiplier_range_lineEdit.setText("0.7, 1.5")
+        self.ui.contrast_range_lineEdit.setText("0.75, 1.25")
+        self.ui.zoom_range_lineEdit.setText("0.5, 1.0")
+        self.ui.gamma_range_lineEdit.setText("0.5, 2")
 
     def initializeLayout(self):
         slicer.app.layoutManager().setLayout(slicer.vtkMRMLLayoutNode.SlicerLayoutFourUpView)
@@ -327,7 +339,7 @@ class DataAugmentationWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                 transformed_image = sitk_translation_transform(itk_image, offset)
                 transformed_label_image = sitk_translation_transform(label_image, offset, is_label=True)
             else:
-                slicer.util.messageBox("暂时没有实现!")
+                not_implemented_message()
                 return
         else:
             print("in rotation")
@@ -352,7 +364,7 @@ class DataAugmentationWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                 d = d[0][0]
                 gt = gt[0][0]
             else:
-                slicer.util.messageBox("暂时没有实现!")
+                not_implemented_message()
                 return
         toc = time.time()
         time_cost = toc - tic
@@ -363,7 +375,6 @@ class DataAugmentationWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         elif mode_name == "batchgenerators":
             slicer.util.updateVolumeFromArray(output_volume_node, d)
             slicer.util.updateVolumeFromArray(output_label_node, gt)
-
 
     def onGaussBlurPushButton(self):
         print("in gauss blur")
@@ -377,9 +388,13 @@ class DataAugmentationWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             label_arr = slicer.util.arrayFromVolume(label_node)
         else:
             label_arr = np.ones_like(image_arr)
+        sigma_range = self.ui.sigma_lineEdit.text
+        sigma_range_min, sigma_range_max = list(map(float, sigma_range.split(",")))
+        print("sigma_range: ", sigma_range)
         mode_name = self.ui.modeSelectorComboBox.currentText
         if mode_name == "batchgenerators":
-            gauss_blur = GaussianBlurTransform(blur_sigma=(0.5, 3), different_sigma_per_channel=False, p_per_sample=1.0)
+            gauss_blur = GaussianBlurTransform(blur_sigma=(sigma_range_min, sigma_range_max),
+                                               different_sigma_per_channel=False, p_per_sample=1.0)
             image_arr = image_arr[np.newaxis, np.newaxis, :, :, :]
             label_arr = label_arr[np.newaxis, np.newaxis, :, :, :]
             tic = time.time()
@@ -388,15 +403,14 @@ class DataAugmentationWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             time_cost = toc - tic
             self.time_cost_lineEdit.setText(str(time_cost) + " s")
             d, gt = out_dict.get('data'), out_dict.get('gt')
-            d = d[0]
-            gt = gt[0]
+            d = d[0][0]
+            gt = gt[0][0]
             slicer.util.updateVolumeFromArray(output_volume_node, d)
         else:
-            slicer.util.messageBox("暂时没有实现!")
+            not_implemented_message()
 
     def onGaussNoisePushButton(self):
         print("in gauss noise")
-        gauss_noise = GaussianNoiseTransform(noise_variance=(0, 0.1), p_per_sample=1.0)
         volume_node = self._parameterNode.GetNodeReference("InputVolume")
         output_volume_node = slicer.modules.volumes.logic().CloneVolume(volume_node, "gauss_noise")
         image_arr = slicer.util.arrayFromVolume(output_volume_node)
@@ -405,17 +419,183 @@ class DataAugmentationWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             label_arr = slicer.util.arrayFromVolume(label_node)
         else:
             label_arr = np.ones_like(image_arr)
-        image_arr = image_arr[np.newaxis, :, :, :]
-        label_arr = label_arr[np.newaxis, :, :, :]
-        tic = time.time()
-        out_dict = gauss_noise(data=image_arr, gt=label_arr)
-        toc = time.time()
-        time_cost = toc - tic
-        self.time_cost_lineEdit.setText(str(time_cost) + " s")
-        d, gt = out_dict.get('data'), out_dict.get('gt')
-        d = d[0]
-        gt = gt[0]
-        slicer.util.updateVolumeFromArray(output_volume_node, d)
+        noise_variance_range = self.ui.noise_variance_lineEdit.text
+        print("noise_variance_range: ", noise_variance_range)
+        noise_range_min, noise_range_max = list(map(float, noise_variance_range.split(",")))
+        mode_name = self.ui.modeSelectorComboBox.currentText
+        if mode_name == "batchgenerators":
+            image_arr = image_arr[np.newaxis, np.newaxis, :, :, :]
+            label_arr = label_arr[np.newaxis, np.newaxis, :, :, :]
+            gauss_noise = GaussianNoiseTransform(noise_variance=(noise_range_min, noise_range_max), p_per_sample=1.0)
+            tic = time.time()
+            out_dict = gauss_noise(data=image_arr, gt=label_arr)
+            toc = time.time()
+            time_cost = toc - tic
+            self.time_cost_lineEdit.setText(str(time_cost) + " s")
+            d, gt = out_dict.get('data'), out_dict.get('gt')
+            d = d[0][0]
+            gt = gt[0][0]
+            slicer.util.updateVolumeFromArray(output_volume_node, d)
+        else:
+            not_implemented_message()
+
+    def onMirrorTransformPushButton(self):
+        print("in onMirrorTransformPushButton")
+        volume_node = self._parameterNode.GetNodeReference("InputVolume")
+        output_volume_node = slicer.modules.volumes.logic().CloneVolume(volume_node, "mirror_transform")
+        label_node = self._parameterNode.GetNodeReference("LabelVolume")
+        output_label_node = slicer.modules.volumes.logic().CloneVolume(label_node, "mirror_transform_label")
+        mirror_axis = self.ui.mirror_axis_lineEdit.text
+        print("mirror_axis: ", mirror_axis)
+        axis = list(map(int, mirror_axis.split(",")))
+        mode_name = self.ui.modeSelectorComboBox.currentText
+        if mode_name == "batchgenerators":
+            image_arr = slicer.util.arrayFromVolume(output_volume_node)
+            if output_label_node:
+                label_arr = slicer.util.arrayFromVolume(output_label_node)
+            else:
+                label_arr = np.ones_like(image_arr)
+            mirror_transform = MirrorTransform(data_key='data', label_key='gt', axes=axis)
+            image_arr = image_arr[np.newaxis, np.newaxis, :, :, :]
+            label_arr = label_arr[np.newaxis, np.newaxis, :, :, :]
+            tic = time.time()
+            out_dict = mirror_transform(data=image_arr, gt=label_arr)
+            toc = time.time()
+            time_cost = toc - tic
+            self.time_cost_lineEdit.setText(str(time_cost) + " s")
+            d, gt = out_dict.get('data'), out_dict.get('gt')
+            d = d[0][0]
+            gt = gt[0][0]
+            slicer.util.updateVolumeFromArray(output_volume_node, d)
+            slicer.util.updateVolumeFromArray(output_label_node, gt)
+        else:
+            not_implemented_message()
+
+    def onBrightnessTransformPushButton(self):
+        print("in onBrightnessTransformPushButton")
+        volume_node = self._parameterNode.GetNodeReference("InputVolume")
+        output_volume_node = slicer.modules.volumes.logic().CloneVolume(volume_node, "brightness_transform")
+        label_node = self._parameterNode.GetNodeReference("LabelVolume")
+        multi_range = self.ui.multiplier_range_lineEdit.text
+        print("multi_range: ", multi_range)
+        multi_range = tuple(map(float, multi_range.split(",")))
+        mode_name = self.ui.modeSelectorComboBox.currentText
+        if mode_name == "batchgenerators":
+            brightness = BrightnessMultiplicativeTransform(multiplier_range=multi_range, per_channel=False,
+                                                           p_per_sample=1.0)
+            image_arr = slicer.util.arrayFromVolume(output_volume_node)
+            image_arr = image_arr[np.newaxis, np.newaxis, :, :, :]
+            tic = time.time()
+            out_dict = brightness(data=image_arr, gt=None)
+            toc = time.time()
+            time_cost = toc - tic
+            self.time_cost_lineEdit.setText(str(time_cost) + " s")
+            d, gt = out_dict.get('data'), out_dict.get('gt')
+            d = d[0][0]
+            gt = gt[0][0]
+            slicer.util.updateVolumeFromArray(output_volume_node, d)
+        else:
+            not_implemented_message()
+
+    def onContrastTransformPushButton(self):
+        print("in onContrastTransformPushButton")
+        volume_node = self._parameterNode.GetNodeReference("InputVolume")
+        output_volume_node = slicer.modules.volumes.logic().CloneVolume(volume_node, "contrast_transform")
+        label_node = self._parameterNode.GetNodeReference("LabelVolume")
+        output_label_node = slicer.modules.volumes.logic().CloneVolume(label_node, "contrast_transform_label")
+        contrast_range = self.ui.contrast_range_lineEdit.text
+        print("contrast_range: ", contrast_range)
+        contrast_range = tuple(map(float, contrast_range.split(",")))
+        mode_name = self.ui.modeSelectorComboBox.currentText
+        if mode_name == "batchgenerators":
+            contrast = ContrastAugmentationTransform(contrast_range=contrast_range, p_per_sample=1.0)
+            image_arr = slicer.util.arrayFromVolume(output_volume_node)
+            if label_node:
+                label_arr = slicer.util.arrayFromVolume(output_label_node)
+            else:
+                label_arr = np.ones_like(image_arr)
+            image_arr = image_arr[np.newaxis, np.newaxis, :, :, :]
+            label_arr = label_arr[np.newaxis, np.newaxis, :, :, :]
+            tic = time.time()
+            out_dict = contrast(data=image_arr, gt=label_arr)
+            toc = time.time()
+            time_cost = toc - tic
+            self.time_cost_lineEdit.setText(str(time_cost) + " s")
+            d, gt = out_dict.get('data'), out_dict.get('gt')
+            d = d[0][0]
+            gt = gt[0][0]
+            slicer.util.updateVolumeFromArray(output_volume_node, d)
+            slicer.util.updateVolumeFromArray(output_label_node, gt)
+        else:
+            not_implemented_message()
+
+    def onResolutionTransformPushButton(self):
+        print("in onResolutionTransformPushButton")
+        volume_node = self._parameterNode.GetNodeReference("InputVolume")
+        output_volume_node = slicer.modules.volumes.logic().CloneVolume(volume_node, "resolution_transform")
+        label_node = self._parameterNode.GetNodeReference("LabelVolume")
+        output_label_node = slicer.modules.volumes.logic().CloneVolume(label_node, "resolution_transform_label")
+        zoom_range = self.ui.zoom_range_lineEdit.text
+        print("zoom_range: ", zoom_range)
+        zoom_range = tuple(map(float, zoom_range.split(",")))
+        mode_name = self.ui.modeSelectorComboBox.currentText
+        if mode_name == "batchgenerators":
+            resolution = SimulateLowResolutionTransform(zoom_range=zoom_range, per_channel=False, p_per_channel=0.5,
+                                                        order_downsample=0, order_upsample=3, p_per_sample=1.0,
+                                                        ignore_axes=None)
+            image_arr = slicer.util.arrayFromVolume(output_volume_node)
+            if output_label_node:
+                label_arr = slicer.util.arrayFromVolume(output_label_node)
+            else:
+                label_arr = np.ones_like(image_arr)
+            image_arr = image_arr[np.newaxis, np.newaxis, :, :, :]
+            label_arr = label_arr[np.newaxis, np.newaxis, :, :, :]
+            tic = time.time()
+            out_dict = resolution(data=image_arr, gt=label_arr)
+            toc = time.time()
+            time_cost = toc - tic
+            self.time_cost_lineEdit.setText(str(time_cost) + " s")
+            d, gt = out_dict.get('data'), out_dict.get('gt')
+            d = d[0][0]
+            gt = gt[0][0]
+            slicer.util.updateVolumeFromArray(output_volume_node, d)
+            slicer.util.updateVolumeFromArray(output_label_node, gt)
+        else:
+            not_implemented_message()
+
+    def onGammaTransformPushButtonn(self):
+        print("in onGammaTransformPushButton")
+        volume_node = self._parameterNode.GetNodeReference("InputVolume")
+        output_volume_node = slicer.modules.volumes.logic().CloneVolume(volume_node, "gamma_transform")        
+        label_node = self._parameterNode.GetNodeReference("LabelVolume")
+        gamma_range = self.ui.gamma_range_lineEdit.text
+        print("gamma_range: ", gamma_range)
+        gamma_range = tuple(map(float, gamma_range.split(",")))
+        mode_name = self.ui.modeSelectorComboBox.currentText
+        if mode_name == "batchgenerators":
+            gamma_transform = GammaTransform(gamma_range=gamma_range, retain_stats=True, p_per_sample=1.0)
+            image_arr = slicer.util.arrayFromVolume(output_volume_node)
+            if label_node:
+                label_arr = slicer.util.arrayFromVolume(label_node)
+            else:
+                label_arr = np.ones_like(image_arr)
+            image_arr = image_arr[np.newaxis, np.newaxis, :, :, :]
+            label_arr = label_arr[np.newaxis, np.newaxis, :, :, :]
+            tic = time.time()
+            out_dict = gamma_transform(data=image_arr, gt=label_arr)
+            toc = time.time()
+            time_cost = toc - tic
+            self.time_cost_lineEdit.setText(str(time_cost) + " s")
+            d, gt = out_dict.get('data'), out_dict.get('gt')
+            d = d[0][0]
+            gt = gt[0][0]
+            slicer.util.updateVolumeFromArray(output_volume_node, d)
+        else:
+            not_implemented_message()
+
+
+def not_implemented_message():
+    slicer.util.messageBox("暂时没有实现!")
 
 
 def sitk_rotation3d(image, theta_x, theta_y, theta_z, output_spacing=None, background_value=0.0):
