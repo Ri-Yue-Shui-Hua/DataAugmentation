@@ -4,13 +4,13 @@
 
 ## 软件界面
 
+![image-20240302204909342](README.assets/image-20240302204909342.png)
 
+![image-20240302204946726](README.assets/image-20240302204946726.png)
 
-![image-20240215222154906](README.assets/image-20240215222154906.png)
+依赖库选择
 
-添加依赖库选择
-
-![image-20240216221929417](README.assets/image-20240216221929417.png)
+![image-20240302205014359](README.assets/image-20240302205014359.png)
 
 todo
 
