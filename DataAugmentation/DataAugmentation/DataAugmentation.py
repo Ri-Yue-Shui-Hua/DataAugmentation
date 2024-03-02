@@ -11,11 +11,11 @@ import sitkUtils
 import time
 import numpy as np
 import itertools
-from transforms.noise_transforms import *
-from transforms.abstract_transforms import Compose
-from transforms.utility_transforms import *
-from transforms.spatial_transforms import *
-from transforms.color_transforms import *
+from batchgenerators.transforms.noise_transforms import *
+from batchgenerators.transforms.abstract_transforms import Compose
+from batchgenerators.transforms.utility_transforms import *
+from batchgenerators.transforms.spatial_transforms import *
+from batchgenerators.transforms.color_transforms import *
 #
 # DataAugmentation
 #
