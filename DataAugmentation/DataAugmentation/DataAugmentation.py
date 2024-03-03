@@ -485,14 +485,14 @@ class DataAugmentationWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                                                            p_per_sample=1.0)
             image_arr = slicer.util.arrayFromVolume(output_volume_node)
             image_arr = image_arr[np.newaxis, np.newaxis, :, :, :]
+            image_arr = image_arr.astype(np.float32)
             tic = time.time()
-            out_dict = brightness(data=image_arr, gt=None)
+            out_dict = brightness(data=image_arr)
             toc = time.time()
             time_cost = toc - tic
             self.time_cost_lineEdit.setText(str(time_cost) + " s")
             d, gt = out_dict.get('data'), out_dict.get('gt')
             d = d[0][0]
-            gt = gt[0][0]
             slicer.util.updateVolumeFromArray(output_volume_node, d)
         else:
             not_implemented_message()
