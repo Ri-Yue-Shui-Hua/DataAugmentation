@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>506</width>
-    <height>1417</height>
+    <width>513</width>
+    <height>1493</height>
    </rect>
   </property>
   <layout class="QVBoxLayout" name="verticalLayout">
@@ -606,6 +606,28 @@
        <widget class="QPushButton" name="gammaTransformPushButton">
         <property name="text">
          <string>GammaTransform</string>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <item>
+    <widget class="ctkCollapsibleButton" name="CollapsibleButton_9">
+     <property name="minimumSize">
+      <size>
+       <width>0</width>
+       <height>0</height>
+      </size>
+     </property>
+     <property name="text">
+      <string>组合变换</string>
+     </property>
+     <layout class="QVBoxLayout" name="verticalLayout_10">
+      <item>
+       <widget class="QPushButton" name="composeTransformPushButton">
+        <property name="text">
+         <string>ComposeTransform</string>
         </property>
        </widget>
       </item>

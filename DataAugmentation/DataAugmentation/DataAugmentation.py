@@ -167,6 +167,7 @@ class DataAugmentationWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.ui.contrastTransformPushButton.connect('clicked(bool)', self.onContrastTransformPushButton)
         self.ui.resolutionTransformPushButton.connect('clicked(bool)', self.onResolutionTransformPushButton)
         self.ui.gammaTransformPushButton.connect('clicked(bool)', self.onGammaTransformPushButtonn)
+        self.ui.composeTransformPushButton.connect('clicked(bool)', self.onComposeTransformPushButton)
 
         # Make sure parameter node is initialized (needed for module reload)
         self.initializeParameterNode()
@@ -590,6 +591,47 @@ class DataAugmentationWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             d = d[0][0]
             gt = gt[0][0]
             slicer.util.updateVolumeFromArray(output_volume_node, d)
+        else:
+            not_implemented_message()
+
+    def onComposeTransformPushButton(self):
+        print("in onGammaTransformPushButton")
+        volume_node = self._parameterNode.GetNodeReference("InputVolume")
+        output_volume_node = slicer.modules.volumes.logic().CloneVolume(volume_node, "compose_transform")
+        label_node = self._parameterNode.GetNodeReference("LabelVolume")
+        output_label_node = slicer.modules.volumes.logic().CloneVolume(label_node, "compose_transform_label")
+        mode_name = self.ui.modeSelectorComboBox.currentText
+        image_arr = slicer.util.arrayFromVolume(output_volume_node)
+        if output_label_node:
+            label_arr = slicer.util.arrayFromVolume(output_label_node)
+        else:
+            label_arr = np.ones_like(image_arr)
+        image_arr = image_arr[np.newaxis, np.newaxis, :, :, :]
+        label_arr = label_arr[np.newaxis, np.newaxis, :, :, :]
+        image_arr = image_arr.astype(np.float32)
+        tic = time.time()
+
+        if mode_name == "batchgenerators":
+            T = []
+            # T.append(GaussianNoiseTransform(p_per_sample=1.0))
+            # T.append(GaussianBlurTransform((0.5, 3), different_sigma_per_channel=False, p_per_sample=1.0))
+            # T.append(
+            #     BrightnessMultiplicativeTransform(multiplier_range=(0.70, 1.3), per_channel=False, p_per_sample=1.0))
+            T.append(ContrastAugmentationTransform(contrast_range=(0.65, 1.5), p_per_sample=1.0))
+            T.append(GammaTransform(gamma_range=(0.7, 1.5), retain_stats=True, p_per_sample=1.0))
+            axis = [2]
+            T.append(MirrorTransform(data_key='data', label_key='gt', axes=axis))
+
+            compose_transform = Compose(T)
+            out_dict = compose_transform(data=image_arr, gt=label_arr)
+            d, gt = out_dict.get('data'), out_dict.get('gt')
+            toc = time.time()
+            time_cost = toc - tic
+            self.time_cost_lineEdit.setText(str(time_cost) + " s")
+            d = d[0][0]
+            gt = gt[0][0]
+            slicer.util.updateVolumeFromArray(output_volume_node, d)
+            slicer.util.updateVolumeFromArray(output_label_node, gt)
         else:
             not_implemented_message()
 
