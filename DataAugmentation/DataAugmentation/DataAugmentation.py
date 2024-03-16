@@ -16,6 +16,7 @@ from batchgenerators.transforms.abstract_transforms import Compose
 from batchgenerators.transforms.utility_transforms import *
 from batchgenerators.transforms.spatial_transforms import *
 from batchgenerators.transforms.color_transforms import *
+from monai.transforms import LoadImage, LoadImaged, Resized, Compose, SaveImage, Orientation
 #
 # DataAugmentation
 #
@@ -168,6 +169,7 @@ class DataAugmentationWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.ui.resolutionTransformPushButton.connect('clicked(bool)', self.onResolutionTransformPushButton)
         self.ui.gammaTransformPushButton.connect('clicked(bool)', self.onGammaTransformPushButtonn)
         self.ui.composeTransformPushButton.connect('clicked(bool)', self.onComposeTransformPushButton)
+        self.ui.loadImagePushButton.connect('clicked(bool)', self.onLoadImagePushButton)
 
         # Make sure parameter node is initialized (needed for module reload)
         self.initializeParameterNode()
@@ -634,6 +636,38 @@ class DataAugmentationWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             slicer.util.updateVolumeFromArray(output_label_node, gt)
         else:
             not_implemented_message()
+
+    def onLoadImagePushButton(self):
+        # https://docs.monai.io/en/stable/transforms.html
+        # https://github.com/Project-MONAI/tutorials/blob/main/modules/load_medical_images.ipynb
+        volume_node = self._parameterNode.GetNodeReference("InputVolume")
+        output_volume_node = slicer.modules.volumes.logic().CloneVolume(volume_node, "loadImage")
+        file_path = volume_node.GetStorageNode().GetFileName()
+        print("file_path: ", file_path)
+        data = LoadImage(image_only=True, ensure_channel_first=True, simple_keys=True)(file_path)
+        # data = LoadImage(image_only=True, reader="NibabelReader", ensure_channel_first=True,
+        # squeeze_non_spatial_dims=True)(file_path)
+        print(f"image data shape: {data.shape}")
+        # print(f"meta data: {data.meta.keys()}")
+        image_arr = data.array
+        image_arr = np.squeeze(image_arr)
+        slicer.util.updateVolumeFromArray(output_volume_node, image_arr)
+
+        output_volume_node = slicer.modules.volumes.logic().CloneVolume(volume_node, "loadImage_RAS")
+        orient_img = Orientation(axcodes="RAS")(data)
+        print(f"orient_img data shape: {orient_img.shape}")
+        # print(f"orient_img data: {orient_img.meta.keys()}")
+        image_arr = orient_img.array
+        image_arr = np.squeeze(image_arr)
+        slicer.util.updateVolumeFromArray(output_volume_node, image_arr)
+        output_volume_node = slicer.modules.volumes.logic().CloneVolume(volume_node, "loadImage_SPL")
+        orient_iar_img = Orientation(axcodes="SPL")(data)
+        print(f"orient_iar_img data shape: {orient_iar_img.shape}")
+        # print(f"orient_iar_img data: {orient_iar_img.meta.keys()}")
+        image_arr = orient_iar_img.array
+        image_arr = np.squeeze(image_arr)
+        slicer.util.updateVolumeFromArray(output_volume_node, image_arr)
+        slicer.util.messageBox("只测试MONAI!")
 
 
 def not_implemented_message():

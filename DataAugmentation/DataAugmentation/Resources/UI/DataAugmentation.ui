@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>513</width>
-    <height>1493</height>
+    <width>514</width>
+    <height>1718</height>
    </rect>
   </property>
   <layout class="QVBoxLayout" name="verticalLayout">
@@ -628,6 +628,22 @@
        <widget class="QPushButton" name="composeTransformPushButton">
         <property name="text">
          <string>ComposeTransform</string>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <item>
+    <widget class="ctkCollapsibleButton" name="CollapsibleButton_10">
+     <property name="text">
+      <string>MONAI数据加载</string>
+     </property>
+     <layout class="QVBoxLayout" name="verticalLayout_11">
+      <item>
+       <widget class="QPushButton" name="loadImagePushButton">
+        <property name="text">
+         <string>LoadImage</string>
         </property>
        </widget>
       </item>
