@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>514</width>
-    <height>1718</height>
+    <width>518</width>
+    <height>1731</height>
    </rect>
   </property>
   <layout class="QVBoxLayout" name="verticalLayout">
@@ -644,6 +644,35 @@
        <widget class="QPushButton" name="loadImagePushButton">
         <property name="text">
          <string>LoadImage</string>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <item>
+    <widget class="ctkCollapsibleButton" name="CollapsibleButton_11">
+     <property name="minimumSize">
+      <size>
+       <width>0</width>
+       <height>0</height>
+      </size>
+     </property>
+     <property name="text">
+      <string>ElasticTransform</string>
+     </property>
+     <layout class="QVBoxLayout" name="verticalLayout_12">
+      <item>
+       <widget class="QLabel" name="label_19">
+        <property name="text">
+         <string>elastic_transformation:</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="elasticTransformPushButton">
+        <property name="text">
+         <string>ElasticTransform</string>
         </property>
        </widget>
       </item>

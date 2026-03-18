@@ -17,6 +17,7 @@ from batchgenerators.transforms.utility_transforms import *
 from batchgenerators.transforms.spatial_transforms import *
 from batchgenerators.transforms.color_transforms import *
 from monai.transforms import LoadImage, LoadImaged, Resized, Compose, SaveImage, Orientation
+from scipy.ndimage import gaussian_filter, map_coordinates
 #
 # DataAugmentation
 #
@@ -170,6 +171,7 @@ class DataAugmentationWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.ui.gammaTransformPushButton.connect('clicked(bool)', self.onGammaTransformPushButtonn)
         self.ui.composeTransformPushButton.connect('clicked(bool)', self.onComposeTransformPushButton)
         self.ui.loadImagePushButton.connect('clicked(bool)', self.onLoadImagePushButton)
+        self.ui.elasticTransformPushButton.connect('clicked(bool)', self.onElasticTransformPushButton)
 
         # Make sure parameter node is initialized (needed for module reload)
         self.initializeParameterNode()
@@ -357,9 +359,25 @@ class DataAugmentationWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                     label_arr = slicer.util.arrayFromVolume(output_label_node)
                 else:
                     label_arr = np.ones_like(image_arr)
-                axis = [0]
-                rotate_filter = RotateAxisTransform(x_angle_range=(-30, 30), y_angle_range=(-20, 20), z_angle_range=(-30, 30), axes=axis,
-                            data_key="data", label_key="gt", p_per_sample=1)
+                patch_size = image_arr.shape
+                x_angle_max = z_angle
+                y_angle_max = y_angle
+                z_angle_max = x_angle
+                rotate_filter = SpatialTransform(
+                    patch_size, [i // 2 for i in patch_size],
+                    do_elastic_deform=True,
+                    do_rotation=True,
+                    angle_x=(x_angle_max / 360. * 2 * np.pi, x_angle_max / 360. * 2 * np.pi),
+                    angle_y=(- y_angle_max / 360. * 2 * np.pi, y_angle_max / 360. * 2 * np.pi),
+                    angle_z=(-z_angle_max / 360. * 2 * np.pi, z_angle_max / 360. * 2 * np.pi),
+                    do_scale=True, scale=(0.75, 1.25),
+                    border_mode_data='nearest', border_cval_data=0,
+                    border_mode_seg='constant', border_cval_seg=0,
+                    order_seg=0, order_data=3,
+                    random_crop=True,
+                    data_key="data", label_key="gt",
+                    p_el_per_sample=0.1, p_rot_per_sample=1.0, p_scale_per_sample=0.1
+                )
                 image_arr = image_arr[np.newaxis, np.newaxis, :, :, :]
                 label_arr = label_arr[np.newaxis, np.newaxis, :, :, :]
                 out_dict = rotate_filter(data=image_arr, gt=label_arr)
@@ -409,6 +427,15 @@ class DataAugmentationWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             d = d[0][0]
             gt = gt[0][0]
             slicer.util.updateVolumeFromArray(output_volume_node, d)
+        elif mode_name == "SimpleITK":
+            sigma = sigma_range_min 
+            itk_image = sitkUtils.PullVolumeFromSlicer(output_volume_node)
+            # 实际上不应该用这个filter，这里只是用来测试这个filter的效果
+            transformed_image = sitk_GradientMagnitudeRecursiveGaussianImageFilter(itk_image, sigma)
+            # sitkUtils.PushVolumeToSlicer(transformed_image, output_volume_node)
+            img_arr = sitk.GetArrayFromImage(transformed_image)
+            img_arr = img_arr/img_arr.max()
+            slicer.util.updateVolumeFromArray(output_volume_node, img_arr)
         else:
             not_implemented_message()
 
@@ -653,8 +680,8 @@ class DataAugmentationWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         image_arr = np.squeeze(image_arr)
         slicer.util.updateVolumeFromArray(output_volume_node, image_arr)
 
-        output_volume_node = slicer.modules.volumes.logic().CloneVolume(volume_node, "loadImage_RAS")
-        orient_img = Orientation(axcodes="RAS")(data)
+        output_volume_node = slicer.modules.volumes.logic().CloneVolume(volume_node, "loadImage_LPS")
+        orient_img = Orientation(axcodes="LPS")(data)
         print(f"orient_img data shape: {orient_img.shape}")
         # print(f"orient_img data: {orient_img.meta.keys()}")
         image_arr = orient_img.array
@@ -669,9 +696,44 @@ class DataAugmentationWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         slicer.util.updateVolumeFromArray(output_volume_node, image_arr)
         slicer.util.messageBox("只测试MONAI!")
 
+    def onElasticTransformPushButton(self):
+        print("in onElasticTransformPushButton")
+        volume_node = self._parameterNode.GetNodeReference("InputVolume")
+        output_volume_node = slicer.modules.volumes.logic().CloneVolume(volume_node, "elastic_transform")
+        label_node = self._parameterNode.GetNodeReference("LabelVolume")
+        output_label_node = slicer.modules.volumes.logic().CloneVolume(label_node, "elastic_transform_label")
+        image_arr = slicer.util.arrayFromVolume(output_volume_node)
+        if label_node:
+            label_arr = slicer.util.arrayFromVolume(output_label_node)
+        else:
+            label_arr = np.ones_like(image_arr)
+        tic = time.time()
+        new_img_arr, new_label_arr = elastic_transformation(image_arr, label_arr)
+        toc = time.time()
+        time_cost = toc - tic
+        self.time_cost_lineEdit.setText(str(time_cost) + " s")
+        slicer.util.updateVolumeFromArray(output_volume_node, new_img_arr)
+        slicer.util.updateVolumeFromArray(output_label_node, new_label_arr)
+
 
 def not_implemented_message():
     slicer.util.messageBox("暂时没有实现!")
+
+
+def elastic_transformation(img: np.ndarray, mask: np.ndarray, alpha: float = 20, sigma: float = 5):
+    '''Elastic deformation of images as described in [Simard2003]_.'''
+    shape = img.shape
+    dx = gaussian_filter((np.random.rand(*shape) * 2 - 1), sigma, mode="constant", cval=0) * alpha
+    dy = gaussian_filter((np.random.rand(*shape) * 2 - 1), sigma, mode="constant", cval=0) * alpha
+    dz = gaussian_filter((np.random.rand(*shape) * 2 - 1), sigma, mode="constant", cval=0) * alpha
+    print("max_dx, max_dy,, max_dz", dx.max(), dy.max(), dz.max())
+
+    z, y, x = np.meshgrid(np.arange(shape[0]), np.arange(shape[1]), np.arange(shape[2]), indexing='ij')
+    coordinates = np.reshape(z + dz, (-1, 1)), np.reshape(y + dy, (-1, 1)), np.reshape(x + dx, (-1, 1))
+
+    distorted_img = map_coordinates(img, coordinates, None, 3, 'reflect').reshape(shape)
+    distorted_mask = map_coordinates(mask, coordinates, None, 1, 'reflect').reshape(shape)
+    return distorted_img, distorted_mask
 
 
 def sitk_rotation3d(image, theta_x, theta_y, theta_z, output_spacing=None, background_value=0.0):
@@ -745,6 +807,12 @@ def sitk_translation_transform(itk_image, offset, is_label=False):
     # 应用ResampleImageFilter到原始图像，得到平移后的图像
     shifted_image = resampler.Execute(itk_image)
     return shifted_image
+
+def sitk_GradientMagnitudeRecursiveGaussianImageFilter(sitk_image, sigma):
+    gradientMagnitudeImageFilter = sitk.GradientMagnitudeRecursiveGaussianImageFilter()
+    gradientMagnitudeImageFilter.SetSigma(sigma)
+    output_image = gradientMagnitudeImageFilter.Execute(sitk_image)
+    return output_image
 
 #
 # DataAugmentationLogic
